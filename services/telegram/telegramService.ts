@@ -2,6 +2,7 @@ import { Bot, Context, GrammyError, HttpError, webhookCallback } from 'grammy';
 import logger from '../../utils/logger';
 import dbService from '../db/dbService';
 import aiService from '../ai/aiService';
+import tradingEngine from '../trading/tradingEngine';
 
 // Create a child logger for the Telegram service
 const telegramLogger = logger.child({ service: 'telegram' });
@@ -328,6 +329,271 @@ const commands = {
       await ctx.reply('Sorry, there was an error processing your request. Please try again later.');
     }
   },
+
+  // Trade command handler
+  trade: async (ctx: Context) => {
+    try {
+      const message = ctx.message?.text?.trim() || '';
+      const params = message.split(' ');
+
+      // Check if required parameters are provided
+      if (params.length < 3) {
+        await ctx.reply('Please provide token symbol and trade type. Example: /trade BTC BUY');
+        return;
+      }
+
+      const tokenSymbol = params[1].toUpperCase();
+      const tradeType = params[2].toUpperCase();
+
+      // Validate trade type
+      if (tradeType !== 'BUY' && tradeType !== 'SELL') {
+        await ctx.reply('Trade type must be either BUY or SELL');
+        return;
+      }
+
+      // Optional amount parameter
+      let amount = 0;
+      if (params.length >= 4) {
+        amount = parseFloat(params[3]);
+        if (isNaN(amount) || amount <= 0) {
+          await ctx.reply('Amount must be a positive number');
+          return;
+        }
+      } else {
+        // Default amount if not provided
+        amount = 0.01; // Small default amount
+      }
+
+      telegramLogger.info('Trade command received', {
+        chat_id: ctx.chat?.id,
+        token: tokenSymbol,
+        type: tradeType,
+        amount: amount,
+      });
+
+      // Send initial response to indicate processing
+      const statusMessage = await ctx.reply(
+        `Processing ${tradeType} order for ${amount} ${tokenSymbol}...`
+      );
+
+      try {
+        // For now, just simulate the trade with a delay
+        // In the future, this would integrate with the trading engine
+
+        if (!ctx.from) {
+          throw new Error('User information not available');
+        }
+
+        // Check if user has a connected wallet
+        const user = await dbService.getUserByTelegramId(ctx.from.id);
+
+        if (!user) {
+          await ctx.api.editMessageText(
+            ctx.chat!.id,
+            statusMessage.message_id,
+            `You need to set up your account first. Please use /start to register.`
+          );
+          return;
+        }
+
+        // Check if user has a wallet connection
+        const walletConnections = await dbService.getWalletConnections(user.id);
+
+        if (!walletConnections || walletConnections.length === 0) {
+          await ctx.api.editMessageText(
+            ctx.chat!.id,
+            statusMessage.message_id,
+            `You need to connect a wallet first. Please use /connect to set up your wallet.`
+          );
+          return;
+        }
+
+        // Use default wallet or let user choose in the future
+        const wallet =
+          walletConnections.find((w: { is_default: boolean }) => w.is_default) ||
+          walletConnections[0];
+
+        // Get token info and current price (simplified for now)
+        const tokenPrice = 100; // Placeholder
+        const tokenAddress = '0x123...'; // Placeholder
+
+        // Simulate trading - in production, call the actual trading engine
+        // const tradeResult = await tradingEngine.executeTrade({
+        //   userId: user.id,
+        //   blockchain: wallet.blockchain,
+        //   tokenSymbol,
+        //   tokenAddress,
+        //   amount,
+        //   tradeType,
+        //   walletAddress: wallet.wallet_address,
+        //   privateKey: 'WOULD_NEED_SECURE_HANDLING' // This needs secure handling
+        // });
+
+        // For now, just simulate a successful trade
+        const txHash = `0x${Math.random().toString(16).substring(2, 34)}`;
+
+        // Record the trade in the database
+        await dbService.recordTrade({
+          user_id: user.id,
+          token_symbol: tokenSymbol,
+          token_address: tokenAddress,
+          blockchain: wallet.blockchain,
+          amount,
+          price: tokenPrice,
+          trade_type: tradeType as 'BUY' | 'SELL',
+          status: 'COMPLETED',
+          tx_hash: txHash,
+        });
+
+        // Send success message
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          statusMessage.message_id,
+          `✅ Trade executed successfully!\n\n` +
+            `${tradeType} ${amount} ${tokenSymbol} at $${tokenPrice}\n` +
+            `Transaction: ${txHash.substring(0, 8)}...${txHash.substring(txHash.length - 6)}\n\n` +
+            `Use /portfolio to view your updated holdings.`
+        );
+      } catch (error) {
+        telegramLogger.error('Error executing trade', error);
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          statusMessage.message_id,
+          `Sorry, I couldn't execute the trade for ${tokenSymbol} at this time.\n\nError: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`
+        );
+      }
+    } catch (error) {
+      telegramLogger.error('Error in trade command handler', error);
+      await ctx.reply(
+        'Sorry, there was an error processing your trade request. Please try again later.'
+      );
+    }
+  },
+
+  // Portfolio command handler
+  portfolio: async (ctx: Context) => {
+    try {
+      telegramLogger.info('Portfolio command received', {
+        chat_id: ctx.chat?.id,
+      });
+
+      if (!ctx.from) {
+        throw new Error('User information not available');
+      }
+
+      // Send initial response
+      const statusMessage = await ctx.reply('Fetching your portfolio...');
+
+      try {
+        // Get user from database
+        const user = await dbService.getUserByTelegramId(ctx.from.id);
+
+        if (!user) {
+          await ctx.api.editMessageText(
+            ctx.chat!.id,
+            statusMessage.message_id,
+            `You need to set up your account first. Please use /start to register.`
+          );
+          return;
+        }
+
+        // Get wallet connections
+        const walletConnections = await dbService.getWalletConnections(user.id);
+
+        if (!walletConnections || walletConnections.length === 0) {
+          await ctx.api.editMessageText(
+            ctx.chat!.id,
+            statusMessage.message_id,
+            `You don't have any connected wallets. Use /connect to add a wallet.`
+          );
+          return;
+        }
+
+        // Get recent trades
+        const recentTrades = await dbService.getRecentTrades(user.id, 5);
+
+        // Format portfolio message
+        let portfolioMessage = `📊 Your Portfolio\n\n`;
+
+        // Add wallet info
+        portfolioMessage += `Connected Wallets:\n`;
+        walletConnections.forEach(
+          (
+            wallet: { wallet_address: string; blockchain: string; is_default: boolean },
+            index: number
+          ) => {
+            const address = wallet.wallet_address;
+            const shortAddress = `${address.substring(0, 6)}...${address.substring(
+              address.length - 4
+            )}`;
+            portfolioMessage += `${index + 1}. ${wallet.blockchain}: ${shortAddress}${
+              wallet.is_default ? ' (Default)' : ''
+            }\n`;
+          }
+        );
+
+        // Add recent trades
+        if (recentTrades && recentTrades.length > 0) {
+          portfolioMessage += `\nRecent Trades:\n`;
+          recentTrades.forEach(
+            (trade: {
+              trade_type: string;
+              amount: number;
+              token_symbol: string;
+              price: number;
+              status: string;
+            }) => {
+              const emoji = trade.trade_type === 'BUY' ? '🟢' : '🔴';
+              portfolioMessage += `${emoji} ${trade.trade_type} ${trade.amount} ${trade.token_symbol} at $${trade.price} (${trade.status})\n`;
+            }
+          );
+        } else {
+          portfolioMessage += `\nNo recent trades found.`;
+        }
+
+        // In the future, add actual token balances from blockchain
+
+        portfolioMessage += `\n\nUse /trade to execute a new trade.`;
+
+        await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, portfolioMessage);
+      } catch (error) {
+        telegramLogger.error('Error fetching portfolio', error);
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          statusMessage.message_id,
+          `Sorry, I couldn't fetch your portfolio at this time. Please try again later.`
+        );
+      }
+    } catch (error) {
+      telegramLogger.error('Error in portfolio command handler', error);
+      await ctx.reply('Sorry, there was an error fetching your portfolio. Please try again later.');
+    }
+  },
+
+  // Connect wallet command handler
+  connect: async (ctx: Context) => {
+    try {
+      telegramLogger.info('Connect command received', {
+        chat_id: ctx.chat?.id,
+      });
+
+      await ctx.reply(
+        `To connect your wallet, please follow these steps:\n\n` +
+          `1. Choose a blockchain: BSC or NEAR\n` +
+          `2. Send your wallet address\n` +
+          `3. Complete the verification process\n\n` +
+          `For security reasons, this should be done through a secure channel. This is a placeholder implementation.`
+      );
+
+      // In a real implementation, this would start a multi-step conversation flow
+      // using a conversation management system or state machine
+    } catch (error) {
+      telegramLogger.error('Error in connect command handler', error);
+      await ctx.reply('Sorry, there was an error processing your request. Please try again later.');
+    }
+  },
 };
 
 // Set up command handlers
@@ -337,6 +603,9 @@ bot.command('sentiment', commands.sentiment);
 bot.command('predict', commands.predict);
 bot.command('signal', commands.signal);
 bot.command('analyze', commands.analyze);
+bot.command('trade', commands.trade);
+bot.command('portfolio', commands.portfolio);
+bot.command('connect', commands.connect);
 
 // Error handler
 bot.catch((err) => {
