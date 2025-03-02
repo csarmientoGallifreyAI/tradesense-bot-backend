@@ -315,6 +315,100 @@ export const dbService = {
       throw error;
     }
   },
+
+  /**
+   * Get user by Telegram ID
+   */
+  async getUserByTelegramId(telegramId: number) {
+    const supabase = getSupabaseClient();
+
+    try {
+      logger.debug('Fetching user by Telegram ID', { telegram_id: telegramId });
+
+      const { data, error } = await supabase
+        .from(Tables.USERS)
+        .select('*')
+        .eq('telegram_id', telegramId)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No rows returned
+          logger.info('User not found by Telegram ID', { telegram_id: telegramId });
+          return null;
+        }
+        throw error;
+      }
+
+      logger.info('User fetched successfully', { telegram_id: telegramId });
+      return data;
+    } catch (error) {
+      logger.error('Failed to fetch user by Telegram ID', error, { telegram_id: telegramId });
+      throw error;
+    }
+  },
+
+  /**
+   * Get wallet connections for a user
+   */
+  async getWalletConnections(userId: number) {
+    const supabase = getSupabaseClient();
+
+    try {
+      logger.debug('Fetching wallet connections', { user_id: userId });
+
+      const { data, error } = await supabase
+        .from(Tables.WALLET_CONNECTIONS)
+        .select('*')
+        .eq('user_id', userId);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Wallet connections fetched', {
+        user_id: userId,
+        count: data.length,
+      });
+
+      return data;
+    } catch (error) {
+      logger.error('Failed to fetch wallet connections', error, { user_id: userId });
+      throw error;
+    }
+  },
+
+  /**
+   * Get recent trades for a user
+   */
+  async getRecentTrades(userId: number, limit = 5) {
+    const supabase = getSupabaseClient();
+
+    try {
+      logger.debug('Fetching recent trades', { user_id: userId, limit });
+
+      const { data, error } = await supabase
+        .from(Tables.TRADES)
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Recent trades fetched', {
+        user_id: userId,
+        count: data.length,
+      });
+
+      return data;
+    } catch (error) {
+      logger.error('Failed to fetch recent trades', error, { user_id: userId });
+      throw error;
+    }
+  },
 };
 
 export default dbService;
