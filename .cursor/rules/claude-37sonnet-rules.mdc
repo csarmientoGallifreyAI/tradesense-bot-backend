@@ -56,7 +56,7 @@ globs: **/*.{js,ts,json, md}
 
 - Maintain a shared code style guide (ES6+ standards, async/await, proper error handling) across all repositories.
 - Use environment variables and secrets management consistently.
-- If Typescript is used, define types in different file like "types.ts" for each service or in an organized way 
+- If you plan on using TypeScript, you might add a note to create a dedicated types.ts file (or directory) for shared type definitions across services. This helps maintain type consistency for API responses, database models, and service contracts.
 
 ## Communication Between Repositories:
 
