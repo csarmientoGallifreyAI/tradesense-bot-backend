@@ -3,6 +3,7 @@ import logger from '../../utils/logger';
 import dbService from '../db/dbService';
 import aiService from '../ai/aiService';
 import tradingEngine from '../trading/tradingEngine';
+import { handleTradeCommand } from '../trading/tradingEngine';
 
 // Create a child logger for the Telegram service
 const telegramLogger = logger.child({ service: 'telegram' });
@@ -99,40 +100,51 @@ const commands = {
       // Send initial response to indicate processing
       const statusMessage = await ctx.reply(`Analyzing market sentiment for ${tokenSymbol}...`);
 
-      // Get sentiment analysis from AI service
-      const sentiment = await aiService.getSentimentAnalysis(tokenSymbol);
+      try {
+        // Get sentiment analysis from AI service
+        const sentiment = await aiService.getSentimentAnalysis(tokenSymbol);
 
-      // Format the response based on the sentiment score
-      let sentimentText = 'neutral';
-      let emoji = '😐';
+        // Format the response based on the sentiment score
+        let sentimentText = 'neutral';
+        let emoji = '😐';
 
-      if (sentiment.score > 0.6) {
-        sentimentText = 'very positive';
-        emoji = '🔥';
-      } else if (sentiment.score > 0.2) {
-        sentimentText = 'positive';
-        emoji = '😀';
-      } else if (sentiment.score < -0.6) {
-        sentimentText = 'very negative';
-        emoji = '📉';
-      } else if (sentiment.score < -0.2) {
-        sentimentText = 'negative';
-        emoji = '😕';
+        if (sentiment.score > 0.6) {
+          sentimentText = 'very positive';
+          emoji = '🔥';
+        } else if (sentiment.score > 0.2) {
+          sentimentText = 'positive';
+          emoji = '😀';
+        } else if (sentiment.score < -0.6) {
+          sentimentText = 'very negative';
+          emoji = '📉';
+        } else if (sentiment.score < -0.2) {
+          sentimentText = 'negative';
+          emoji = '😕';
+        }
+
+        // Prepare response message
+        const response =
+          `${emoji} ${tokenSymbol} Sentiment: ${sentimentText.toUpperCase()}\n\n` +
+          `Score: ${(sentiment.score * 100).toFixed(1)}%\n` +
+          `Sources analyzed: ${sentiment.sources.length || 'N/A'}\n` +
+          `${sentiment.cached ? '(Analysis from cache)' : '(Fresh analysis)'}\n\n` +
+          `Want a trading signal? Try /signal ${tokenSymbol}`;
+
+        // Edit previous message with the results
+        await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, response);
+      } catch (error) {
+        telegramLogger.error('Error getting sentiment analysis', { error, token: tokenSymbol });
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          statusMessage.message_id,
+          `Sorry, I couldn't analyze sentiment for ${tokenSymbol} at this time.\n\nError: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`
+        );
       }
-
-      // Prepare response message
-      const response =
-        `${emoji} ${tokenSymbol} Sentiment: ${sentimentText.toUpperCase()}\n\n` +
-        `Score: ${(sentiment.score * 100).toFixed(1)}%\n` +
-        `Sources analyzed: ${sentiment.sources.length || 'N/A'}\n` +
-        `${sentiment.cached ? '(Analysis from cache)' : '(Fresh analysis)'}\n\n` +
-        `Want a trading signal? Try /signal ${tokenSymbol}`;
-
-      // Edit previous message with the results
-      await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, response);
     } catch (error) {
       telegramLogger.error('Error in sentiment command handler', error);
-      await ctx.reply('Sorry, there was an error analyzing sentiment. Please try again later.');
+      await ctx.reply('Sorry, there was an error processing your request. Please try again later.');
     }
   },
 
@@ -334,52 +346,22 @@ const commands = {
   trade: async (ctx: Context) => {
     try {
       const message = ctx.message?.text?.trim() || '';
-      const params = message.split(' ');
 
       // Check if required parameters are provided
-      if (params.length < 3) {
+      if (message.split(' ').length < 3) {
         await ctx.reply('Please provide token symbol and trade type. Example: /trade BTC BUY');
         return;
       }
 
-      const tokenSymbol = params[1].toUpperCase();
-      const tradeType = params[2].toUpperCase();
-
-      // Validate trade type
-      if (tradeType !== 'BUY' && tradeType !== 'SELL') {
-        await ctx.reply('Trade type must be either BUY or SELL');
-        return;
-      }
-
-      // Optional amount parameter
-      let amount = 0;
-      if (params.length >= 4) {
-        amount = parseFloat(params[3]);
-        if (isNaN(amount) || amount <= 0) {
-          await ctx.reply('Amount must be a positive number');
-          return;
-        }
-      } else {
-        // Default amount if not provided
-        amount = 0.01; // Small default amount
-      }
-
       telegramLogger.info('Trade command received', {
         chat_id: ctx.chat?.id,
-        token: tokenSymbol,
-        type: tradeType,
-        amount: amount,
+        message,
       });
 
       // Send initial response to indicate processing
-      const statusMessage = await ctx.reply(
-        `Processing ${tradeType} order for ${amount} ${tokenSymbol}...`
-      );
+      const statusMessage = await ctx.reply(`Processing trade request...`);
 
       try {
-        // For now, just simulate the trade with a delay
-        // In the future, this would integrate with the trading engine
-
         if (!ctx.from) {
           throw new Error('User information not available');
         }
@@ -413,53 +395,39 @@ const commands = {
           walletConnections.find((w: { is_default: boolean }) => w.is_default) ||
           walletConnections[0];
 
-        // Get token info and current price (simplified for now)
-        const tokenPrice = 100; // Placeholder
-        const tokenAddress = '0x123...'; // Placeholder
-
-        // Simulate trading - in production, call the actual trading engine
-        // const tradeResult = await tradingEngine.executeTrade({
-        //   userId: user.id,
-        //   blockchain: wallet.blockchain,
-        //   tokenSymbol,
-        //   tokenAddress,
-        //   amount,
-        //   tradeType,
-        //   walletAddress: wallet.wallet_address,
-        //   privateKey: 'WOULD_NEED_SECURE_HANDLING' // This needs secure handling
-        // });
-
-        // For now, just simulate a successful trade
-        const txHash = `0x${Math.random().toString(16).substring(2, 34)}`;
-
-        // Record the trade in the database
-        await dbService.recordTrade({
-          user_id: user.id,
-          token_symbol: tokenSymbol,
-          token_address: tokenAddress,
+        // Execute the trade using the new trading engine function
+        const tradeResult = await handleTradeCommand(message, {
+          userId: user.id,
+          walletAddress: wallet.wallet_address,
           blockchain: wallet.blockchain,
-          amount,
-          price: tokenPrice,
-          trade_type: tradeType as 'BUY' | 'SELL',
-          status: 'COMPLETED',
-          tx_hash: txHash,
         });
 
-        // Send success message
-        await ctx.api.editMessageText(
-          ctx.chat!.id,
-          statusMessage.message_id,
-          `✅ Trade executed successfully!\n\n` +
-            `${tradeType} ${amount} ${tokenSymbol} at $${tokenPrice}\n` +
-            `Transaction: ${txHash.substring(0, 8)}...${txHash.substring(txHash.length - 6)}\n\n` +
-            `Use /portfolio to view your updated holdings.`
-        );
+        if (tradeResult.success) {
+          // Success message
+          await ctx.api.editMessageText(
+            ctx.chat!.id,
+            statusMessage.message_id,
+            `${tradeResult.message}\n\n` +
+              `Transaction: ${tradeResult.txHash?.substring(
+                0,
+                8
+              )}...${tradeResult.txHash?.substring(tradeResult.txHash.length - 6)}\n\n` +
+              `Use /portfolio to view your updated holdings.`
+          );
+        } else {
+          // Error message
+          await ctx.api.editMessageText(
+            ctx.chat!.id,
+            statusMessage.message_id,
+            tradeResult.message
+          );
+        }
       } catch (error) {
         telegramLogger.error('Error executing trade', error);
         await ctx.api.editMessageText(
           ctx.chat!.id,
           statusMessage.message_id,
-          `Sorry, I couldn't execute the trade for ${tokenSymbol} at this time.\n\nError: ${
+          `Sorry, I couldn't execute your trade at this time.\n\nError: ${
             error instanceof Error ? error.message : 'Unknown error'
           }`
         );

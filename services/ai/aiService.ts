@@ -64,55 +64,81 @@ const aiService = {
         throw new Error('Sentiment analysis endpoint not configured');
       }
 
-      const response = await axios.post(
-        sentimentEndpoint,
-        {
+      // Create a timer to measure API response time
+      const startTime = Date.now();
+
+      try {
+        const response = await axios.post(
+          sentimentEndpoint,
+          {
+            token: tokenSymbol,
+            timeframe,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
+            },
+            timeout: 8000, // 8 second timeout (below Vercel's function timeout)
+          }
+        );
+
+        const responseTime = Date.now() - startTime;
+        aiLogger.info('Sentiment API response received', {
           token: tokenSymbol,
           timeframe,
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
-          },
-          timeout: 8000, // 8 second timeout (below Vercel's function timeout)
+          response_time_ms: responseTime,
+        });
+
+        if (response.status !== 200) {
+          throw new Error(`Sentiment API returned status ${response.status}`);
         }
-      );
 
-      if (response.status !== 200) {
-        throw new Error(`Sentiment API returned status ${response.status}`);
+        // Validate response structure
+        const result = response.data;
+        if (!result || typeof result.score !== 'number' || !Array.isArray(result.sources)) {
+          throw new Error('Invalid response format from sentiment API');
+        }
+
+        // Store in database for future cache
+        await dbService.storeSentimentAnalysis({
+          token_symbol: tokenSymbol,
+          sentiment_score: result.score,
+          timeframe,
+          sources: result.sources,
+        });
+
+        return {
+          score: result.score,
+          sources: result.sources,
+          cached: false,
+          timestamp: new Date().toISOString(),
+        };
+      } catch (apiError) {
+        // Enhanced error logging with request details
+        aiLogger.error('Error calling sentiment API', {
+          error: apiError,
+          token: tokenSymbol,
+          timeframe,
+          endpoint: sentimentEndpoint,
+          response_time_ms: Date.now() - startTime,
+        });
+
+        // If it's a timeout error, provide more context
+        if (axios.isAxiosError(apiError) && apiError.code === 'ECONNABORTED') {
+          throw new Error(`Sentiment analysis timed out after ${Date.now() - startTime}ms`);
+        }
+
+        // Pass along a user-friendly error
+        throw new Error('Failed to fetch sentiment analysis from external service');
       }
-
-      const result = response.data;
-
-      // Store in database for future cache
-      await dbService.storeSentimentAnalysis({
-        token_symbol: tokenSymbol,
-        sentiment_score: result.score,
-        timeframe,
-        sources: result.sources || [],
-      });
-
-      return {
-        score: result.score,
-        sources: result.sources || [],
-        cached: false,
-        timestamp: new Date().toISOString(),
-      };
     } catch (error) {
-      aiLogger.error('Failed to get sentiment analysis', error, {
+      aiLogger.error('Error in getSentimentAnalysis', {
+        error,
         token: tokenSymbol,
         timeframe,
       });
-
-      // Return a sensible default if we can't get sentiment
-      return {
-        score: 0,
-        sources: [],
-        error: error instanceof Error ? error.message : 'Unknown error',
-        cached: false,
-        timestamp: new Date().toISOString(),
-      };
+      throw error;
     }
   },
 
@@ -128,43 +154,85 @@ const aiService = {
         timeHorizon,
       });
 
+      // Enhanced price prediction API call with better error handling
       const predictionEndpoint = process.env.PRICE_PREDICTION_ENDPOINT;
       if (!predictionEndpoint) {
         throw new Error('Price prediction endpoint not configured');
       }
 
-      const response = await axios.post(
-        predictionEndpoint,
-        {
+      // Create a timer to measure API response time
+      const startTime = Date.now();
+
+      try {
+        const response = await axios.post(
+          predictionEndpoint,
+          {
+            token: tokenSymbol,
+            timeHorizon,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
+            },
+            timeout: 10000, // 10 second timeout (predictions might take longer)
+          }
+        );
+
+        const responseTime = Date.now() - startTime;
+        aiLogger.info('Price prediction API response received', {
           token: tokenSymbol,
           timeHorizon,
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
-          },
-          timeout: 8000,
+          response_time_ms: responseTime,
+        });
+
+        if (response.status !== 200) {
+          throw new Error(`Price prediction API returned status ${response.status}`);
         }
-      );
 
-      if (response.status !== 200) {
-        throw new Error(`Prediction API returned status ${response.status}`);
+        // Validate and process the response
+        const result = response.data;
+        if (
+          !result ||
+          typeof result.currentPrice !== 'number' ||
+          typeof result.predictedPrice !== 'number' ||
+          typeof result.percentageChange !== 'number' ||
+          typeof result.confidence !== 'number'
+        ) {
+          throw new Error('Invalid response format from price prediction API');
+        }
+
+        return {
+          currentPrice: result.currentPrice,
+          predictedPrice: result.predictedPrice,
+          percentageChange: result.percentageChange,
+          confidence: result.confidence,
+          timestamp: new Date().toISOString(),
+        };
+      } catch (apiError) {
+        // Enhanced error logging with request details
+        aiLogger.error('Error calling price prediction API', {
+          error: apiError,
+          token: tokenSymbol,
+          timeHorizon,
+          endpoint: predictionEndpoint,
+          response_time_ms: Date.now() - startTime,
+        });
+
+        // If it's a timeout error, provide more context
+        if (axios.isAxiosError(apiError) && apiError.code === 'ECONNABORTED') {
+          throw new Error(`Price prediction timed out after ${Date.now() - startTime}ms`);
+        }
+
+        // Pass along a user-friendly error
+        throw new Error('Failed to fetch price prediction from external service');
       }
-
-      return {
-        currentPrice: response.data.currentPrice,
-        predictedPrice: response.data.predictedPrice,
-        percentageChange: response.data.percentageChange,
-        confidence: response.data.confidence,
-        timestamp: new Date().toISOString(),
-      };
     } catch (error) {
-      aiLogger.error('Failed to get price prediction', error, {
+      aiLogger.error('Error in getPricePrediction', {
+        error,
         token: tokenSymbol,
         timeHorizon,
       });
-
       throw error;
     }
   },
