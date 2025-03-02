@@ -92,7 +92,7 @@ Each command follows a consistent pattern with:
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/yourusername/tradesense-bot-backend.git
+   git clone https://github.com/csarmientoGallifreyAI/tradesense-bot-backend.git
    cd tradesense-bot-backend
    ```
 
