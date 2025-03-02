@@ -1,0 +1,67 @@
+---
+description: TradeSense Bot Backend Development Guidelines
+globs: **/*.{js,ts,json, md}
+---
+
+# Project Structure & Modularity
+
+- Organize backend code into clear modules: Telegram Service, AI Service, Trading Engine, and Database/Cache Layer
+- Telegram Service should handle webhook processing, command parsing, and bot responses
+- AI Service should abstract calls to external AI models (sentiment, signal, prediction)
+- Trading Engine should isolate blockchain trading logic (BSC/NEAR adapters) and trade execution functions
+- Database/Cache Layer should centralize interactions with Supabase and any caching services
+
+# Design documents
+- Design and architecture documents are in the ./docs folder as .md files. 
+
+# Serverless & API Guidelines
+
+- Deploy as Vercel Serverless Functions (or Next.js API routes) for webhooks, API endpoints, and scheduled tasks
+- Ensure each endpoint is stateless and can run in parallel
+- Use connection pooling carefully for Supabase interactions
+
+# Logging & Error Handling
+
+- Use a structured Logger service for all backend operations
+- Implement comprehensive try/catch blocks to gracefully handle errors
+- Log key events (trade execution, AI service calls, authentication) for debugging and auditing
+- Avoid unnecessary or redundant logging
+- Handle errors gracefully with appropriate status codes and error messages
+- When debugging issues, consider 5-7 different possible sources of the problem before implementing fixes
+- Add diagnostic logs to validate assumptions before implementing code changes
+
+# Integration & External Calls
+
+- Validate Telegram webhook requests using secret tokens
+- Use caching (Redis/Supabase) to minimize redundant API calls for AI results, crypto prices, etc.
+- Securely call external AI services and blockchain nodes using environment variables for sensitive keys
+
+# Security & API Design
+
+- Enforce strict authentication and authorization (JWT verification for user-specific endpoints)
+- Separate public (client-side) routes from those requiring elevated (service role) privileges
+- Use parameterized queries and Supabase's Row Level Security (RLS) for all database operations
+- Store all sensitive keys and tokens in environment variables, never in code
+
+# Code Quality
+
+- Use comments wisely to provide context for complex code or security-critical sections
+- Avoid commenting what the code does if it's self-explanatory
+- Implement unit tests for critical functions, especially trade execution and AI service integration
+- If Typescript is used, define types in different file like "types.ts" for each service or in an organized way 
+
+# Final Notes
+
+## Consistency Across Repositories:
+
+- Maintain a shared code style guide (ES6+ standards, async/await, proper error handling) across all repositories.
+- Use environment variables and secrets management consistently.
+- If Typescript is used, define types in different file like "types.ts" for each service or in an organized way 
+
+## Communication Between Repositories:
+
+- Define clear API contracts between the backend, AI services, and the dashboard.
+- Use a central document (or API specification file) that describes endpoints, data formats, and error responses.
+- Documentation:
+- Each repository should include a README that explains its purpose, setup instructions, and any specific “Cursor Rules” that need to be followed.
+- Ensure that repository-specific guidelines are revisited periodically as the project evolves.
