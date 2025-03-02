@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "description": "TradeSense Bot Backend - Serverless Functions & API for Telegram trading bot with AI integration",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
+    "dev": "npm run dev --prefix services/telegram",
+    "build": "npm run build --prefix services/telegram",
+    "start": "npm run start --prefix services/telegram",
+    "lint": "npm run lint --prefix services/telegram",
     "test": "jest"
   },
   "dependencies": {
