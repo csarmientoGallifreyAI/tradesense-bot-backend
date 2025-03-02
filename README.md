@@ -83,6 +83,10 @@ The application uses Supabase with the following tables:
 - `predictions`: Stores price predictions
 - `trade_signals`: Records trading signals
 
+### Telegram-Supabase User Linking
+
+Users are linked between Telegram and Supabase via the Telegram user ID. When a user interacts with the bot for the first time (using the `/start` command), we create a record in the `users` table with their Telegram ID and other available information. This ID is then used as a reference point across all tables that need user context.
+
 ## Project Structure
 
 ```bash
@@ -98,8 +102,31 @@ The application uses Supabase with the following tables:
 │   └── db/                         # Database interactions
 ├── utils/
 │   └── logger/                     # Structured logging
+├── types/                          # Shared TypeScript type definitions
 └── docs/                           # Documentation
 ```
+
+### TypeScript Type Management
+
+To maintain consistency across services, we use a dedicated `types` directory for shared type definitions. This includes:
+
+- `types/api.ts` - Definitions for API request/response structures
+- `types/models.ts` - Database model type definitions
+- `types/services.ts` - Service-specific type definitions
+
+Using these shared types helps ensure consistency between services and provides better type safety across the application.
+
+## Future Enhancements and Modularity
+
+As the project grows, we'll maintain the following modularity principles:
+
+1. **API Modularity** - If API endpoints grow in complexity, we'll introduce a dedicated `controllers` directory to manage request handling logic separately from route definitions.
+
+2. **Service Boundaries** - Each service should have clear boundaries and communicate through well-defined interfaces.
+
+3. **Testing Strategy** - Unit tests should be co-located with the modules they test, following a `__tests__` directory pattern.
+
+4. **Feature Flags** - For experimental features, we'll implement a feature flag system to enable/disable functionality without code changes.
 
 ## Deployment
 
