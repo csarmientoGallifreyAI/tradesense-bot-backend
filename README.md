@@ -252,3 +252,77 @@ This project is designed to be deployed to Vercel or similar serverless platform
 ## License
 
 MIT
+
+## Hugging Face Integration
+
+This project integrates with Hugging Face models through multiple approaches, giving you flexibility based on your needs:
+
+### Option 1: Hugging Face Inference API (Default)
+
+The `@huggingface/inference` client provides direct access to Hugging Face models via their Inference API:
+
+```typescript
+import { HfInference } from '@huggingface/inference';
+
+const inference = new HfInference(process.env.HUGGINGFACE_API_TOKEN);
+const result = await inference.textClassification({
+  model: 'csarmiento/k80x-CryptoBERT',
+  inputs: 'Bitcoin is showing strong recovery signals',
+});
+```
+
+Benefits:
+
+- Type-safe API with TypeScript support
+- Simple, clean interface
+- Direct model access
+- Minimal overhead
+
+### Option 2: Gradio Client for Hugging Face Spaces
+
+For Gradio-based Spaces (like our `kk08-CryptoBERT` Space), we use the `@gradio/client`:
+
+```typescript
+import { Client } from '@gradio/client';
+
+const client = await Client.connect('csarmiento/kk08-CryptoBERT', {
+  hf_token: `hf_${process.env.HUGGINGFACE_API_TOKEN}`,
+});
+
+const result = await client.predict('/predict', {
+  param_0: 'Bitcoin is showing strong recovery signals',
+});
+```
+
+Benefits:
+
+- Access to Gradio-based Spaces with custom UI and logic
+- Enables use of more complex custom Spaces
+- Uses the exact same flow as the Gradio web interface
+
+### When to Use Each Approach
+
+- **Use Inference API (Option 1)** when you need direct model access with minimal overhead
+- **Use Gradio Client (Option 2)** when:
+  - The model is hosted in a Gradio Space with custom logic
+  - You need to replicate the exact behavior seen in the Gradio web UI
+  - The Space has preprocessing or postprocessing steps
+
+### Testing and Examples
+
+Test scripts are provided for both approaches:
+
+- `tests/huggingface-test.ts` - Test the Inference API
+- `tests/gradio-client-test.ts` - Test the Gradio client
+
+Run these tests with:
+
+```bash
+# For Inference API
+npx ts-node tests/huggingface-test.ts
+
+# For Gradio client
+npx ts-node tests/gradio-client-test.ts
+```
+
+## Environment Configuration

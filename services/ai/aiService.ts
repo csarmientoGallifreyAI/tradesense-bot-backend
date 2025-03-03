@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { HfInference } from '@huggingface/inference';
 import logger from '../../utils/logger';
 import {
   SentimentAnalysisResponse,
@@ -18,46 +19,74 @@ const PREDICTION_CACHE_DURATION = 1800000; // 30 minutes
 const SIGNAL_CACHE_DURATION = 900000; // 15 minutes
 
 class AIService {
-  private huggingfaceToken: string;
-  private sentimentModelUrl: string;
-  private pricePredictionModelUrl: string;
-  private tradingSignalModelUrl: string;
-  private comprehensiveAnalysisModelUrl: string;
+  private inferenceClient: HfInference | null = null;
+  private sentimentModelId: string;
+  private pricePredictionModelId: string;
+  private tradingSignalModelId: string;
+  private comprehensiveAnalysisModelId: string;
 
   constructor() {
-    this.huggingfaceToken = process.env.HUGGINGFACE_API_TOKEN || '';
-    this.sentimentModelUrl = process.env.HUGGINGFACE_SENTIMENT_URL || '';
-    this.pricePredictionModelUrl = process.env.HUGGINGFACE_PRICE_PREDICTION_URL || '';
-    this.tradingSignalModelUrl = process.env.HUGGINGFACE_TRADING_SIGNAL_URL || '';
-    this.comprehensiveAnalysisModelUrl = process.env.HUGGINGFACE_COMPREHENSIVE_ANALYSIS_URL || '';
+    const apiToken = process.env.HUGGINGFACE_API_TOKEN || '';
 
-    if (!this.huggingfaceToken) {
+    // Set up the Inference Client if we have a token
+    if (apiToken) {
+      this.inferenceClient = new HfInference(apiToken);
+    } else {
       aiLogger.warn('HUGGINGFACE_API_TOKEN not configured. AI service will not function properly.');
     }
 
-    if (!this.sentimentModelUrl) {
+    // Extract model IDs from URLs or use direct model IDs
+    this.sentimentModelId = this.extractModelId(process.env.HUGGINGFACE_SENTIMENT_URL || '');
+    this.pricePredictionModelId = this.extractModelId(
+      process.env.HUGGINGFACE_PRICE_PREDICTION_URL || ''
+    );
+    this.tradingSignalModelId = this.extractModelId(
+      process.env.HUGGINGFACE_TRADING_SIGNAL_URL || ''
+    );
+    this.comprehensiveAnalysisModelId = this.extractModelId(
+      process.env.HUGGINGFACE_COMPREHENSIVE_ANALYSIS_URL || ''
+    );
+
+    if (!this.sentimentModelId) {
       aiLogger.warn(
         'HUGGINGFACE_SENTIMENT_URL not configured. Sentiment analysis will not be available.'
       );
     }
 
-    if (!this.pricePredictionModelUrl) {
+    if (!this.pricePredictionModelId) {
       aiLogger.warn(
         'HUGGINGFACE_PRICE_PREDICTION_URL not configured. Price prediction will not be available.'
       );
     }
 
-    if (!this.tradingSignalModelUrl) {
+    if (!this.tradingSignalModelId) {
       aiLogger.warn(
         'HUGGINGFACE_TRADING_SIGNAL_URL not configured. Trading signals will not be available.'
       );
     }
 
-    if (!this.comprehensiveAnalysisModelUrl) {
+    if (!this.comprehensiveAnalysisModelId) {
       aiLogger.warn(
         'HUGGINGFACE_COMPREHENSIVE_ANALYSIS_URL not configured. Comprehensive analysis will not be available.'
       );
     }
+  }
+
+  /**
+   * Extracts the model ID from a Hugging Face URL or returns the ID directly
+   * @param urlOrId - Either a full URL or direct model ID
+   */
+  private extractModelId(urlOrId: string): string {
+    if (!urlOrId) return '';
+
+    // If it's a URL, extract the model ID
+    if (urlOrId.startsWith('https://api-inference.huggingface.co/models/')) {
+      const modelPath = urlOrId.replace('https://api-inference.huggingface.co/models/', '');
+      return modelPath;
+    }
+
+    // Otherwise, assume it's already a model ID
+    return urlOrId;
   }
 
   /**
@@ -108,39 +137,36 @@ class AIService {
         }
       }
 
-      // Validate model URL configuration
-      if (!this.sentimentModelUrl) {
-        throw new Error('Sentiment analysis model URL not configured');
+      // Validate model configuration
+      if (!this.inferenceClient) {
+        throw new Error('Hugging Face API token not configured');
       }
 
-      // Make API request to sentiment model
+      if (!this.sentimentModelId) {
+        throw new Error('Sentiment analysis model not configured');
+      }
+
+      // Make API request to sentiment model using the Inference Client
       aiLogger.debug('Making external API request for sentiment analysis', {
         tokenSymbol,
         timeframe,
-        url: this.sentimentModelUrl.substring(0, 30) + '...',
+        model: this.sentimentModelId,
       });
 
-      const response = await axios.post(
-        this.sentimentModelUrl,
-        { inputs: { token: tokenSymbol, timeframe } },
-        {
-          headers: { Authorization: `Bearer ${this.huggingfaceToken}` },
-          timeout: 15000, // 15 second timeout
-        }
-      );
+      // Call the Hugging Face API using the client
+      const response = await this.inferenceClient.textClassification({
+        model: this.sentimentModelId,
+        inputs: JSON.stringify({ token: tokenSymbol, timeframe }),
+      });
 
-      // Validate response structure
-      if (
-        !response.data ||
-        typeof response.data.score !== 'number' ||
-        !Array.isArray(response.data.sources)
-      ) {
-        throw new Error('Invalid response structure from sentiment model');
-      }
+      // Extract the relevant data from the response
+      // Note: This assumes the model returns classification results that we need to process
+      // Adjust this based on your actual model's response format
+      const processedResponse = this.processSentimentResponse(response, tokenSymbol);
 
       const result = {
-        score: response.data.score,
-        sources: response.data.sources || [],
+        score: processedResponse.score,
+        sources: processedResponse.sources || [],
         cached: false,
         timestamp: new Date().toISOString(),
       };
@@ -183,6 +209,52 @@ class AIService {
       });
 
       throw new Error(`Failed to get sentiment analysis for ${tokenSymbol}: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Process the sentiment model response into the expected format
+   * This function translates the Hugging Face classifier output to our internal format
+   */
+  private processSentimentResponse(
+    response: Array<{ label: string; score: number }>,
+    tokenSymbol: string
+  ): { score: number; sources: string[] } {
+    aiLogger.debug('Processing sentiment response', { response });
+
+    // Default values
+    let score = 0;
+    let sources: string[] = [];
+
+    try {
+      // If we got a structured output in expected format
+      if (Array.isArray(response) && response.length > 0) {
+        // Calculate normalized sentiment score from labels
+        // Assuming the model returns labels like POSITIVE, NEUTRAL, NEGATIVE
+        const positiveScore = response.find((r) => r.label === 'POSITIVE')?.score || 0;
+        const negativeScore = response.find((r) => r.label === 'NEGATIVE')?.score || 0;
+
+        // Normalize to a score between -1 and 1
+        score = positiveScore - negativeScore;
+
+        // Generate sources based on the response (this is an example, adjust based on your model)
+        sources = [`Hugging Face classification model for ${tokenSymbol}`];
+      }
+      // If using a custom model that returns a score directly
+      else if (typeof response === 'object' && response !== null) {
+        const customResponse = response as any;
+        if (typeof customResponse.score === 'number') {
+          score = customResponse.score;
+        }
+        if (Array.isArray(customResponse.sources)) {
+          sources = customResponse.sources;
+        }
+      }
+
+      return { score, sources };
+    } catch (error) {
+      aiLogger.error('Error processing sentiment response', { error, response });
+      return { score: 0, sources: [] };
     }
   }
 
@@ -231,43 +303,40 @@ class AIService {
         });
       }
 
-      // Validate model URL configuration
-      if (!this.pricePredictionModelUrl) {
-        throw new Error('Price prediction model URL not configured');
+      // Validate model configuration
+      if (!this.inferenceClient) {
+        throw new Error('Hugging Face API token not configured');
       }
 
-      // Make API request to price prediction model
+      if (!this.pricePredictionModelId) {
+        throw new Error('Price prediction model not configured');
+      }
+
+      // Make API request to price prediction model using the Inference Client
       aiLogger.debug('Making external API request for price prediction', {
         tokenSymbol,
         timeHorizon,
-        url: this.pricePredictionModelUrl.substring(0, 30) + '...',
+        model: this.pricePredictionModelId,
       });
 
-      const response = await axios.post(
-        this.pricePredictionModelUrl,
-        { inputs: { token: tokenSymbol, timeframe: timeHorizon } },
-        {
-          headers: { Authorization: `Bearer ${this.huggingfaceToken}` },
-          timeout: 20000, // 20 second timeout for more complex model
-        }
-      );
+      // Call the Hugging Face API using the client
+      const response = await this.inferenceClient.textGeneration({
+        model: this.pricePredictionModelId,
+        inputs: JSON.stringify({ token: tokenSymbol, timeframe: timeHorizon }),
+        parameters: {
+          max_new_tokens: 512,
+          return_full_text: false,
+        },
+      });
 
-      // Validate response structure
-      if (
-        !response.data ||
-        typeof response.data.currentPrice !== 'number' ||
-        typeof response.data.predictedPrice !== 'number' ||
-        typeof response.data.percentageChange !== 'number' ||
-        typeof response.data.confidence !== 'number'
-      ) {
-        throw new Error('Invalid response structure from price prediction model');
-      }
+      // Process the response
+      const processedResponse = this.processPricePredictionResponse(response, tokenSymbol);
 
       const result = {
-        currentPrice: response.data.currentPrice,
-        predictedPrice: response.data.predictedPrice,
-        percentageChange: response.data.percentageChange,
-        confidence: response.data.confidence,
+        currentPrice: processedResponse.currentPrice,
+        predictedPrice: processedResponse.predictedPrice,
+        percentageChange: processedResponse.percentageChange,
+        confidence: processedResponse.confidence,
         timestamp: new Date().toISOString(),
       };
 
@@ -317,6 +386,84 @@ class AIService {
   }
 
   /**
+   * Process the price prediction model response
+   */
+  private processPricePredictionResponse(
+    response: { generated_text: string } | Array<{ generated_text: string }>,
+    tokenSymbol: string
+  ): {
+    currentPrice: number;
+    predictedPrice: number;
+    percentageChange: number;
+    confidence: number;
+  } {
+    aiLogger.debug('Processing price prediction response', { response });
+
+    try {
+      // Default values
+      const defaultResult = {
+        currentPrice: 0,
+        predictedPrice: 0,
+        percentageChange: 0,
+        confidence: 0,
+      };
+
+      // Get the text from the response
+      let generatedText = '';
+      if (Array.isArray(response) && response.length > 0) {
+        generatedText = response[0].generated_text;
+      } else if (typeof response === 'object' && response !== null) {
+        generatedText = (response as any).generated_text || '';
+      }
+
+      if (!generatedText) {
+        throw new Error('No text generated from the price prediction model');
+      }
+
+      // Try to parse the JSON from the generated text
+      // If the model returns JSON-formatted text
+      try {
+        const jsonMatch = generatedText.match(/{[\s\S]*}/);
+        if (jsonMatch) {
+          const parsedData = JSON.parse(jsonMatch[0]);
+
+          // Validate the structure
+          if (
+            typeof parsedData.currentPrice === 'number' &&
+            typeof parsedData.predictedPrice === 'number' &&
+            typeof parsedData.percentageChange === 'number' &&
+            typeof parsedData.confidence === 'number'
+          ) {
+            return parsedData;
+          }
+        }
+      } catch (parseError) {
+        aiLogger.warn('Could not parse JSON from generated text', {
+          error: parseError,
+          generatedText,
+        });
+      }
+
+      // If we couldn't parse JSON or the model returns another format
+      // This is a simplified example - you may need more complex parsing logic
+      // based on your specific model's output format
+      aiLogger.warn('Using fallback parsing for price prediction response', {
+        tokenSymbol,
+        generatedText: generatedText.substring(0, 100) + '...',
+      });
+
+      return defaultResult;
+    } catch (error) {
+      aiLogger.error('Error processing price prediction response', { error, response });
+      throw new Error(
+        `Failed to process price prediction response: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  /**
    * Get a trading signal for a given token symbol.
    * @param tokenSymbol - e.g., "SOL"
    * @param includeAnalysis - Whether to include detailed analysis text
@@ -360,43 +507,41 @@ class AIService {
         });
       }
 
-      // Validate model URL configuration
-      if (!this.tradingSignalModelUrl) {
-        throw new Error('Trading signal model URL not configured');
+      // Validate model configuration
+      if (!this.inferenceClient) {
+        throw new Error('Hugging Face API token not configured');
       }
 
-      // Make API request to trading signal model
+      if (!this.tradingSignalModelId) {
+        throw new Error('Trading signal model not configured');
+      }
+
+      // Make API request to trading signal model using the Inference Client
       aiLogger.debug('Making external API request for trading signal', {
         tokenSymbol,
         includeAnalysis,
-        url: this.tradingSignalModelUrl.substring(0, 30) + '...',
+        model: this.tradingSignalModelId,
       });
 
-      const response = await axios.post(
-        this.tradingSignalModelUrl,
-        { inputs: { token: tokenSymbol, includeAnalysis } },
-        {
-          headers: { Authorization: `Bearer ${this.huggingfaceToken}` },
-          timeout: 15000, // 15 second timeout
-        }
-      );
+      // Call the Hugging Face API using the client
+      const response = await this.inferenceClient.textClassification({
+        model: this.tradingSignalModelId,
+        inputs: JSON.stringify({ token: tokenSymbol, includeAnalysis }),
+      });
 
-      // Validate response structure
-      if (
-        !response.data ||
-        !['BUY', 'SELL', 'HOLD'].includes(response.data.signal) ||
-        typeof response.data.strength !== 'number' ||
-        !Array.isArray(response.data.reasons)
-      ) {
-        throw new Error('Invalid response structure from trading signal model');
-      }
+      // Process the response
+      const processedResponse = this.processTradingSignalResponse(
+        response,
+        tokenSymbol,
+        includeAnalysis
+      );
 
       const result = {
         token: tokenSymbol,
-        signal: response.data.signal as 'BUY' | 'SELL' | 'HOLD',
-        strength: response.data.strength,
-        reasons: response.data.reasons || [],
-        analysis: includeAnalysis ? response.data.analysis : null,
+        signal: processedResponse.signal,
+        strength: processedResponse.strength,
+        reasons: processedResponse.reasons || [],
+        analysis: processedResponse.analysis,
         timestamp: new Date().toISOString(),
       };
 
@@ -443,6 +588,69 @@ class AIService {
   }
 
   /**
+   * Process the trading signal model response
+   */
+  private processTradingSignalResponse(
+    response: Array<{ label: string; score: number }>,
+    tokenSymbol: string,
+    includeAnalysis: boolean
+  ): {
+    signal: 'BUY' | 'SELL' | 'HOLD';
+    strength: number;
+    reasons: string[];
+    analysis: string | null;
+  } {
+    aiLogger.debug('Processing trading signal response', { response });
+
+    try {
+      // Default values
+      let signalType: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+      let strength = 0;
+      let reasons: string[] = [];
+      let analysisText: string | null = null;
+
+      // Get the label from the response
+      if (Array.isArray(response) && response.length > 0) {
+        const positiveScore = response.find((r) => r.label === 'POSITIVE')?.score || 0;
+        const negativeScore = response.find((r) => r.label === 'NEGATIVE')?.score || 0;
+
+        if (positiveScore > negativeScore) {
+          signalType = 'BUY';
+        } else if (negativeScore > positiveScore) {
+          signalType = 'SELL';
+        }
+      }
+
+      // Generate reasons based on the response (this is an example, adjust based on your model)
+      reasons = [`Hugging Face classification model for ${tokenSymbol}`];
+
+      // Calculate strength based on the response (this is an example, adjust based on your model)
+      strength = response.reduce((sum, r) => sum + r.score, 0) / response.length;
+
+      // Generate analysis based on the response (this is an example, adjust based on your model)
+      if (includeAnalysis) {
+        analysisText = `Based on the model's response, the signal is ${signalType}. The strength is ${strength.toFixed(
+          2
+        )}. Reasons: ${reasons.join(', ')}`;
+      }
+
+      return {
+        signal: signalType,
+        strength,
+        reasons,
+        analysis: analysisText,
+      };
+    } catch (error) {
+      aiLogger.error('Error processing trading signal response', { error, response });
+      throw new Error(
+        `Failed to process trading signal response: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  /**
    * Get a comprehensive analysis for a given token symbol.
    * Combines sentiment, prediction, and signal into an overall recommendation.
    * @param tokenSymbol - e.g., "BNB"
@@ -458,38 +666,37 @@ class AIService {
       // We can either make a single call to a comprehensive model or
       // combine results from multiple models. Here we'll use the dedicated model.
 
-      // Validate model URL configuration
-      if (!this.comprehensiveAnalysisModelUrl) {
-        throw new Error('Comprehensive analysis model URL not configured');
+      // Validate model configuration
+      if (!this.inferenceClient) {
+        throw new Error('Hugging Face API token not configured');
       }
 
-      // Make API request to comprehensive analysis model
+      if (!this.comprehensiveAnalysisModelId) {
+        throw new Error('Comprehensive analysis model not configured');
+      }
+
+      // Make API request to comprehensive analysis model using the Inference Client
       aiLogger.debug('Making external API request for comprehensive analysis', {
         tokenSymbol,
-        url: this.comprehensiveAnalysisModelUrl.substring(0, 30) + '...',
+        model: this.comprehensiveAnalysisModelId,
       });
 
-      const response = await axios.post(
-        this.comprehensiveAnalysisModelUrl,
-        { inputs: { token: tokenSymbol } },
-        {
-          headers: { Authorization: `Bearer ${this.huggingfaceToken}` },
-          timeout: 30000, // 30 second timeout for this complex analysis
-        }
-      );
+      // Call the Hugging Face API using the client
+      const response = await this.inferenceClient.textClassification({
+        model: this.comprehensiveAnalysisModelId,
+        inputs: JSON.stringify({ token: tokenSymbol }),
+      });
 
-      // Validate response structure
-      if (!response.data || !['BUY', 'SELL', 'HOLD'].includes(response.data.recommendation)) {
-        throw new Error('Invalid response structure from comprehensive analysis model');
-      }
+      // Process the response
+      const processedResponse = this.processComprehensiveAnalysisResponse(response, tokenSymbol);
 
       const result = {
         token: tokenSymbol,
         timestamp: new Date().toISOString(),
-        sentiment: response.data.sentiment,
-        prediction: response.data.prediction,
-        signal: response.data.signal,
-        recommendation: response.data.recommendation as 'BUY' | 'SELL' | 'HOLD',
+        sentiment: processedResponse.sentiment,
+        prediction: processedResponse.prediction,
+        signal: processedResponse.signal,
+        recommendation: processedResponse.recommendation,
       };
 
       // Log performance metrics
@@ -513,6 +720,80 @@ class AIService {
       });
 
       throw new Error(`Failed to get comprehensive analysis for ${tokenSymbol}: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Process the comprehensive analysis model response
+   */
+  private processComprehensiveAnalysisResponse(
+    response: Array<{ label: string; score: number }>,
+    tokenSymbol: string
+  ): {
+    sentiment?: SentimentAnalysisResponse;
+    prediction?: PricePredictionResponse | null;
+    signal?: TradingSignalResponse | null;
+    recommendation: 'BUY' | 'SELL' | 'HOLD';
+  } {
+    aiLogger.debug('Processing comprehensive analysis response', { response });
+
+    try {
+      // Default return values that match the expected types
+      let recommendationType: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+
+      // Simple mocked objects that match the type signature - these would need to be
+      // replaced with actual implementations based on your model's response format
+      const sentimentData: SentimentAnalysisResponse = {
+        score: 0,
+        sources: [],
+        cached: false,
+        timestamp: new Date().toISOString(),
+      };
+
+      const predictionData: PricePredictionResponse = {
+        currentPrice: 0,
+        predictedPrice: 0,
+        percentageChange: 0,
+        confidence: 0,
+        timestamp: new Date().toISOString(),
+      };
+
+      const signalData: TradingSignalResponse = {
+        token: tokenSymbol,
+        signal: 'HOLD',
+        strength: 0,
+        reasons: [],
+        timestamp: new Date().toISOString(),
+      };
+
+      // Determine recommendation based on response
+      if (Array.isArray(response) && response.length > 0) {
+        const buyScore = response.find((r) => r.label === 'BUY')?.score || 0;
+        const sellScore = response.find((r) => r.label === 'SELL')?.score || 0;
+        const holdScore = response.find((r) => r.label === 'HOLD')?.score || 0;
+
+        if (buyScore > sellScore && buyScore > holdScore) {
+          recommendationType = 'BUY';
+        } else if (sellScore > buyScore && sellScore > holdScore) {
+          recommendationType = 'SELL';
+        } else {
+          recommendationType = 'HOLD';
+        }
+      }
+
+      return {
+        sentiment: sentimentData,
+        prediction: predictionData,
+        signal: signalData,
+        recommendation: recommendationType,
+      };
+    } catch (error) {
+      aiLogger.error('Error processing comprehensive analysis response', { error, response });
+      throw new Error(
+        `Failed to process comprehensive analysis response: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 }
