@@ -317,6 +317,166 @@ export const dbService = {
   },
 
   /**
+   * Store price prediction results
+   */
+  async storePricePrediction(data: {
+    token_symbol: string;
+    current_price: number;
+    predicted_price: number;
+    percentage_change: number;
+    confidence: number;
+    timeframe?: '1h' | '24h' | '7d';
+  }) {
+    const supabase = getSupabaseClient();
+
+    try {
+      logger.debug('Storing price prediction', {
+        token: data.token_symbol,
+        timeframe: data.timeframe || '24h',
+      });
+
+      const { error } = await supabase.from(Tables.PREDICTIONS).insert({
+        token_symbol: data.token_symbol,
+        current_price: data.current_price,
+        predicted_price: data.predicted_price,
+        percentage_change: data.percentage_change,
+        confidence: data.confidence,
+        timeframe: data.timeframe || '24h',
+        created_at: new Date().toISOString(),
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Price prediction stored successfully', {
+        token: data.token_symbol,
+        timeframe: data.timeframe || '24h',
+      });
+    } catch (error) {
+      logger.error('Failed to store price prediction', error, { data });
+      throw error;
+    }
+  },
+
+  /**
+   * Get the most recent price prediction for a token
+   */
+  async getLatestPrediction(tokenSymbol: string, timeframe: '1h' | '24h' | '7d' = '24h') {
+    const supabase = getSupabaseClient();
+
+    try {
+      logger.debug('Fetching latest price prediction', {
+        token: tokenSymbol,
+        timeframe,
+      });
+
+      const { data, error } = await supabase
+        .from(Tables.PREDICTIONS)
+        .select('*')
+        .eq('token_symbol', tokenSymbol)
+        .eq('timeframe', timeframe)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Latest price prediction fetched', {
+        token: tokenSymbol,
+        timeframe,
+        found: data.length > 0,
+      });
+
+      return data[0] || null;
+    } catch (error) {
+      logger.error('Failed to fetch latest price prediction', error, {
+        token: tokenSymbol,
+        timeframe,
+      });
+      throw error;
+    }
+  },
+
+  /**
+   * Store trading signal results
+   */
+  async storeTradeSignal(data: {
+    token_symbol: string;
+    signal: 'BUY' | 'SELL' | 'HOLD';
+    strength: number;
+    reasons: string[];
+    analysis?: string | null;
+  }) {
+    const supabase = getSupabaseClient();
+
+    try {
+      logger.debug('Storing trading signal', {
+        token: data.token_symbol,
+        signal: data.signal,
+      });
+
+      const { error } = await supabase.from(Tables.TRADE_SIGNALS).insert({
+        token_symbol: data.token_symbol,
+        signal: data.signal,
+        strength: data.strength,
+        reasons: data.reasons,
+        analysis: data.analysis || null,
+        created_at: new Date().toISOString(),
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Trading signal stored successfully', {
+        token: data.token_symbol,
+        signal: data.signal,
+      });
+    } catch (error) {
+      logger.error('Failed to store trading signal', error, { data });
+      throw error;
+    }
+  },
+
+  /**
+   * Get the most recent trading signal for a token
+   */
+  async getLatestTradeSignal(tokenSymbol: string) {
+    const supabase = getSupabaseClient();
+
+    try {
+      logger.debug('Fetching latest trading signal', {
+        token: tokenSymbol,
+      });
+
+      const { data, error } = await supabase
+        .from(Tables.TRADE_SIGNALS)
+        .select('*')
+        .eq('token_symbol', tokenSymbol)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Latest trading signal fetched', {
+        token: tokenSymbol,
+        found: data.length > 0,
+      });
+
+      return data[0] || null;
+    } catch (error) {
+      logger.error('Failed to fetch latest trading signal', error, {
+        token: tokenSymbol,
+      });
+      throw error;
+    }
+  },
+
+  /**
    * Get user by Telegram ID
    */
   async getUserByTelegramId(telegramId: number) {

@@ -202,6 +202,35 @@ class AIService {
     aiLogger.info('Getting price prediction', { tokenSymbol, timeHorizon });
 
     try {
+      // Check cache
+      const cachedResult = await dbService.getLatestPrediction(tokenSymbol, timeHorizon);
+
+      if (cachedResult) {
+        const cacheAge = Date.now() - new Date(cachedResult.created_at).getTime();
+
+        if (cacheAge < PREDICTION_CACHE_DURATION) {
+          aiLogger.info('Using cached price prediction', {
+            tokenSymbol,
+            timeHorizon,
+            cacheAge: `${Math.round(cacheAge / 1000)}s`,
+          });
+
+          return {
+            currentPrice: cachedResult.current_price,
+            predictedPrice: cachedResult.predicted_price,
+            percentageChange: cachedResult.percentage_change,
+            confidence: cachedResult.confidence,
+            timestamp: cachedResult.created_at,
+          };
+        }
+
+        aiLogger.info('Cached price prediction expired', {
+          tokenSymbol,
+          timeHorizon,
+          cacheAge: `${Math.round(cacheAge / 1000)}s`,
+        });
+      }
+
       // Validate model URL configuration
       if (!this.pricePredictionModelUrl) {
         throw new Error('Price prediction model URL not configured');
@@ -254,6 +283,25 @@ class AIService {
         durationMs: duration,
       });
 
+      // Store in cache
+      try {
+        await dbService.storePricePrediction({
+          token_symbol: tokenSymbol,
+          current_price: result.currentPrice,
+          predicted_price: result.predictedPrice,
+          percentage_change: result.percentageChange,
+          confidence: result.confidence,
+          timeframe: timeHorizon,
+        });
+      } catch (cacheError) {
+        aiLogger.error('Failed to store price prediction in cache', {
+          error: (cacheError as Error).message,
+          tokenSymbol,
+          timeHorizon,
+        });
+        // Continue despite cache error
+      }
+
       return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -284,6 +332,34 @@ class AIService {
     aiLogger.info('Getting trading signal', { tokenSymbol, includeAnalysis });
 
     try {
+      // Check cache
+      const cachedResult = await dbService.getLatestTradeSignal(tokenSymbol);
+
+      if (cachedResult) {
+        const cacheAge = Date.now() - new Date(cachedResult.created_at).getTime();
+
+        if (cacheAge < SIGNAL_CACHE_DURATION) {
+          aiLogger.info('Using cached trading signal', {
+            tokenSymbol,
+            cacheAge: `${Math.round(cacheAge / 1000)}s`,
+          });
+
+          return {
+            token: tokenSymbol,
+            signal: cachedResult.signal,
+            strength: cachedResult.strength,
+            reasons: cachedResult.reasons || [],
+            analysis: includeAnalysis ? cachedResult.analysis : null,
+            timestamp: cachedResult.created_at,
+          };
+        }
+
+        aiLogger.info('Cached trading signal expired', {
+          tokenSymbol,
+          cacheAge: `${Math.round(cacheAge / 1000)}s`,
+        });
+      }
+
       // Validate model URL configuration
       if (!this.tradingSignalModelUrl) {
         throw new Error('Trading signal model URL not configured');
@@ -334,6 +410,23 @@ class AIService {
         includeAnalysis,
         durationMs: duration,
       });
+
+      // Store in cache
+      try {
+        await dbService.storeTradeSignal({
+          token_symbol: tokenSymbol,
+          signal: result.signal,
+          strength: result.strength,
+          reasons: result.reasons,
+          analysis: result.analysis,
+        });
+      } catch (cacheError) {
+        aiLogger.error('Failed to store trading signal in cache', {
+          error: (cacheError as Error).message,
+          tokenSymbol,
+        });
+        // Continue despite cache error
+      }
 
       return result;
     } catch (error) {
