@@ -2,7 +2,6 @@ import { Bot, Context, GrammyError, HttpError, webhookCallback } from 'grammy';
 import logger from '../../utils/logger';
 import dbService from '../db/dbService';
 import aiService from '../ai/aiService';
-import tradingEngine from '../trading/tradingEngine';
 import { handleTradeCommand } from '../trading/tradingEngine';
 
 // Create a child logger for the Telegram service

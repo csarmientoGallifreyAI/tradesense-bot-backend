@@ -80,6 +80,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Verify the webhook request
     if (!verifyWebhookRequest(req)) {
       webhookLogger.warn('Webhook verification failed');
+      webhookLogger.warn('Webhook request headers', {
+        'content-type': req.headers['content-type'],
+        'content-length': req.headers['content-length'],
+        'x-telegram-bot-api-secret-token': req.headers['x-telegram-bot-api-secret-token'],
+      });
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
