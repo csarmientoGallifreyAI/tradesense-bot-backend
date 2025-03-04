@@ -16,7 +16,7 @@ const verifyWebhookRequest = (req: NextApiRequest): boolean => {
 
   // Check if the token matches the expected value
   const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET;
-  console.log('secretToken', secretToken);
+
   if (!secretToken) {
     webhookLogger.warn('TELEGRAM_WEBHOOK_SECRET not configured');
     return false;
@@ -27,7 +27,7 @@ const verifyWebhookRequest = (req: NextApiRequest): boolean => {
 
   if (!isValid) {
     webhookLogger.warn('Invalid webhook token received', {
-      received: token,
+      received: token ? 'token-present' : 'token-missing',
       expected_length: secretToken.length,
     });
   }
@@ -37,6 +37,7 @@ const verifyWebhookRequest = (req: NextApiRequest): boolean => {
 
 /**
  * Utility function to extract the raw body as text
+ * This is used only for debugging and doesn't interfere with the main body parsing
  */
 const readRawBody = (req: NextApiRequest): Promise<string> => {
   return new Promise((resolve) => {
@@ -84,15 +85,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       webhookLogger.warn('Webhook request headers', {
         'content-type': req.headers['content-type'],
         'content-length': req.headers['content-length'],
-        'x-telegram-bot-api-secret-token': req.headers['x-telegram-bot-api-secret-token'],
+        'has-secret-token': Boolean(req.headers['x-telegram-bot-api-secret-token']),
       });
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // For debugging: read and log the raw body content
-    // This is only for debugging issues and can be removed in production
+    // Log that we received a webhook request
+    webhookLogger.info('Received Telegram webhook request', {
+      method: req.method,
+      headers: {
+        'content-type': req.headers['content-type'],
+        'has-secret-token': Boolean(req.headers['x-telegram-bot-api-secret-token']),
+      },
+    });
+
+    // For debugging: read and log the raw body content in development only
+    // This is done in a way that doesn't interfere with the main request processing
+    let debugBodyInfo = {};
     if (process.env.NODE_ENV !== 'production') {
       try {
+        // Create a clone of the request to read the body without consuming the original
         const rawBody = await readRawBody(req);
         if (rawBody) {
           const bodySize = rawBody.length;
@@ -103,13 +115,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             bodyPreview = rawBody.substring(0, 500) + '... [truncated]';
           }
 
-          webhookLogger.debug('Webhook raw body', {
+          debugBodyInfo = {
             bodySize,
             bodyPreview,
             hasUpdate: rawBody.includes('"update_id"'),
             hasMessage: rawBody.includes('"message"'),
             hasCallbackQuery: rawBody.includes('"callback_query"'),
-          });
+          };
+
+          webhookLogger.debug('Webhook raw body', debugBodyInfo);
         } else {
           webhookLogger.warn('Webhook body is empty');
         }
@@ -120,30 +134,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Log that we received a webhook request
-    webhookLogger.info('Received Telegram webhook request', {
-      method: req.method,
-      headers: {
-        'content-type': req.headers['content-type'],
-        // Log only presence of the secret token, not the actual value
-        'has-secret-token': Boolean(req.headers['x-telegram-bot-api-secret-token']),
-      },
-    });
-
-    // Important: We need to reset the req.body stream position for Grammy to read it
-    // This is necessary because we already consumed the stream in our debug logging
-    if ((req as any).body instanceof require('stream').Readable) {
-      (req as any).body.resume();
-    }
-
     // Process the update using grammy's webhook callback handler
     // This will automatically parse the body and pass it to the bot instance
-    await telegramService.handleUpdate(req, res);
+    try {
+      await telegramService.handleUpdate(req, res);
 
-    // If handleUpdate doesn't send a response, we should end it here
-    if (!res.writableEnded) {
-      webhookLogger.debug('No response sent by handler, sending default response');
-      res.status(200).json({ ok: true });
+      // If handleUpdate doesn't send a response, we should end it here
+      if (!res.writableEnded) {
+        webhookLogger.debug('No response sent by handler, sending default response');
+        res.status(200).json({ ok: true });
+      }
+    } catch (handlerError) {
+      webhookLogger.error('Error in handleUpdate', {
+        error: handlerError instanceof Error ? handlerError.message : 'Unknown error',
+        stack: handlerError instanceof Error ? handlerError.stack : undefined,
+        debugBodyInfo,
+      });
+
+      // Ensure we send a response
+      if (!res.writableEnded) {
+        res.status(500).json({ error: 'Error processing Telegram update' });
+      }
     }
   } catch (error) {
     // Log the error with details

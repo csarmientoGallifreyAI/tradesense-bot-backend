@@ -801,8 +801,29 @@ bot.catch((err) => {
   telegramLogger.error(errorMessage);
 });
 
-// Webhook handler for use with Next.js API routes or Vercel Functions
-export const handleUpdate = webhookCallback(bot, 'next-js');
+// Enhanced webhook handler with additional debugging
+const enhancedWebhookCallback = webhookCallback(bot, 'next-js');
+
+// Wrapper around the webhook callback to add debugging
+export const handleUpdate = async (req: any, res: any) => {
+  telegramLogger.debug('Received update in handleUpdate wrapper', {
+    method: req.method,
+    contentType: req.headers['content-type'],
+    hasBody: !!req.body,
+  });
+
+  try {
+    // Call the original webhook callback
+    await enhancedWebhookCallback(req, res);
+    telegramLogger.debug('Webhook callback completed successfully');
+  } catch (error) {
+    telegramLogger.error('Error in webhook callback', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    throw error; // Re-throw to be handled by the API route
+  }
+};
 
 // Exports
 export { bot, commands };
