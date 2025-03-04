@@ -16,6 +16,7 @@ const verifyWebhookRequest = (req: NextApiRequest): boolean => {
 
   // Check if the token matches the expected value
   const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET;
+  console.log('secretToken', secretToken);
   if (!secretToken) {
     webhookLogger.warn('TELEGRAM_WEBHOOK_SECRET not configured');
     return false;

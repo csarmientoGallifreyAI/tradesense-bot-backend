@@ -326,3 +326,15 @@ npx ts-node tests/gradio-client-test.ts
 ```
 
 ## Environment Configuration
+
+The project uses the following environment variables:
+
+- `HUGGINGFACE_API_TOKEN`: Hugging Face API token for model access
+- `TELEGRAM_BOT_TOKEN`: Telegram bot token for bot functionality
+- `TELEGRAM_WEBHOOK_URL`: URL for the Telegram webhook
+- `TELEGRAM_WEBHOOK_SECRET`: Secret token for the Telegram webhook
+- `HUGGINGFACE_API_TOKEN`: Hugging Face API token for model access
+- `TELEGRAM_BOT_TOKEN`: Telegram bot token for bot functionality
+- `TELEGRAM_WEBHOOK_URL`: URL for the Telegram webhook
+- `TELEGRAM_WEBHOOK_SECRET`: Secret token for the Telegram webhook
+- `SETUP_WEBHOOK_URL`: URL for the Telegram webhook setup
