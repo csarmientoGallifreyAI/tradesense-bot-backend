@@ -30,6 +30,8 @@ const commands = {
         });
       }
 
+      console.log(ctx);
+
       await ctx.reply(
         `👋 Welcome to TradeSense Bot! I can help you analyze crypto markets using AI.\n\n` +
           `🔹 /sentiment BTC [timeframe] - Get market sentiment analysis\n` +
